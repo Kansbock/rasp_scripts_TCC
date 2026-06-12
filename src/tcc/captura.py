@@ -2,39 +2,54 @@ from gpiozero import MotionSensor
 from picamera2 import Picamera2
 from time import sleep
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 FOTOS_DIR = Path.home() / "fotos"
 FOTOS_DIR.mkdir(parents=True, exist_ok=True)
 
-COOLDOWN = 5 * 60  # 5 minutos em segundos
+# Configurações
+NUM_FOTOS = 3
+DELAY_ENTRE_FOTOS = 1.5 
+COOLDOWN_MINUTOS = 5
 
 pir = MotionSensor(17)
 
-picam2 = Picamera2()
-picam2.configure(picam2.create_still_configuration())
-picam2.start()
+print("Iniciando o sistema de captura...")
 
-print("Iniciando o sensor PIR. Aguarde 2 segundos para calibração...")
-sleep(2)
-print(f"Pronto! Fotos serão salvas em: {FOTOS_DIR}")
-print("Aguardando movimento...")
+ultima_captura = datetime.min 
 
 try:
     while True:
         pir.wait_for_motion()
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        caminho = FOTOS_DIR / f"foto_{timestamp}.jpg"
-        picam2.capture_file(str(caminho))
-        print(f"Movimento detectado! Foto salva: {caminho}")
-
-        # Durante este sleep, nenhum sinal do PIR é processado (cooldown de 5 min)
-        print("Cooldown de 5 minutos iniciado. Sinais serão ignorados.")
-        sleep(COOLDOWN)
-        print("Cooldown encerrado. Aguardando movimento...")
+        
+        agora = datetime.now()
+        
+        if (agora - ultima_captura) > timedelta(minutes=COOLDOWN_MINUTOS):
+            print("Movimento detectado! Iniciando sequência...")
+            
+            # Inicializa a câmera APENAS no momento da captura
+            picam2 = Picamera2()
+            picam2.configure(picam2.create_still_configuration())
+            picam2.start()
+            # Tempo para estabilização de exposição/branco da câmera
+            sleep(2) 
+            
+            for i in range(NUM_FOTOS):
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                caminho = FOTOS_DIR / f"foto_{timestamp}_{i}.jpg"
+                picam2.capture_file(str(caminho))
+                print(f"Foto {i+1} capturada.")
+                sleep(DELAY_ENTRE_FOTOS)
+            
+            # Libera o hardware imediatamente após a sequência
+            picam2.stop()
+            picam2.close()
+            
+            ultima_captura = datetime.now()
+            print("Sequência concluída. Câmera liberada. Entrando em cooldown.")
+        else:
+            print("Movimento detectado, mas está no período de cooldown. Ignorando.")
+            sleep(1) 
 
 except KeyboardInterrupt:
     print("\nPrograma encerrado.")
-finally:
-    picam2.stop()
