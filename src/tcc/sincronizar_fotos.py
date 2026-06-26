@@ -10,7 +10,11 @@ load_dotenv()
 def enviar_e_apagar_fotos(pasta_origem):
     url = "https://7o79fzgdc0.execute-api.us-east-1.amazonaws.com/prod/upload"
     api_key = os.getenv('API_KEY')
-    
+
+    if not api_key:
+        print("ERRO: variável de ambiente API_KEY não definida. Configure o arquivo .env.")
+        return
+
     origem = Path(pasta_origem)
 
     # Filtra apenas arquivos .jpg e .jpeg
@@ -29,7 +33,7 @@ def enviar_e_apagar_fotos(pasta_origem):
             payload = {"image_data": encoded_string}
             headers = {"x-api-key": api_key, "Content-Type": "application/json"}
             
-            response = requests.post(url, json=payload, headers=headers)
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
             
             if response.status_code == 200:
                 print(f"Sucesso: {arquivo.name} enviado. Apagando arquivo local.")

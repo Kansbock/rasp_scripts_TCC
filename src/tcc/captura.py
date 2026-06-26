@@ -36,27 +36,32 @@ try:
 
             # Inicializa a câmera APENAS no momento da captura
             picam2 = Picamera2()
-            picam2.configure(picam2.create_still_configuration())
-            picam2.start()
-            
-            # --- CONFIGURAÇÃO DE FOCO MANUAL ---
-            picam2.set_controls({"AfMode": 0}) 
-            # Ajuste o valor abaixo (ex: 3.0, 5.0, 7.0) conforme seus testes práticos
-            picam2.set_controls({"LensPosition": 5.0}) 
-            
-            # Tempo para estabilização de exposição/branco/foco da câmera
-            sleep(2)
+            try:
+                picam2.configure(picam2.create_still_configuration())
+                picam2.start()
 
-            for i in range(NUM_FOTOS):
-                timestamp = datetime.now(FUSO_BR).strftime("%Y%m%d_%H%M%S")
-                caminho = FOTOS_DIR / f"foto_{timestamp}_{i}.jpg"
-                picam2.capture_file(str(caminho))
-                print(f"Foto {i+1} capturada.")
-                sleep(DELAY_ENTRE_FOTOS)
+                # --- CONFIGURAÇÃO DE FOCO MANUAL ---
+                picam2.set_controls({"AfMode": 0})
+                # Ajuste o valor abaixo (ex: 3.0, 5.0, 7.0) conforme seus testes práticos
+                picam2.set_controls({"LensPosition": 5.0})
 
-            # Libera o hardware imediatamente após a sequência
-            picam2.stop()
-            picam2.close()
+                # Tempo para estabilização de exposição/branco/foco da câmera
+                sleep(2)
+
+                for i in range(NUM_FOTOS):
+                    timestamp = datetime.now(FUSO_BR).strftime("%Y%m%d_%H%M%S")
+                    caminho = FOTOS_DIR / f"foto_{timestamp}_{i}.jpg"
+                    # Grava em arquivo temporário e renomeia ao final para evitar
+                    # que o sincronizador envie/apague uma foto ainda em escrita.
+                    caminho_tmp = caminho.with_name(caminho.name + ".tmp")
+                    picam2.capture_file(str(caminho_tmp))
+                    caminho_tmp.rename(caminho)
+                    print(f"Foto {i+1} capturada.")
+                    sleep(DELAY_ENTRE_FOTOS)
+            finally:
+                # Libera o hardware mesmo se ocorrer erro durante a captura
+                picam2.stop()
+                picam2.close()
 
             ultima_captura = datetime.now(FUSO_BR)
             print("Sequência concluída. Câmera liberada. Entrando em cooldown.")
