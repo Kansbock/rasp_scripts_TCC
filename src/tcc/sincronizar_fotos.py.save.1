@@ -1,0 +1,138 @@
+import requests
+import base64
+import os
+import time
+import subprocess
+import concurrent.futures
+import threading
+from datetime import datetime
+from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Configurações
+USB_BUS = '1-1'
+USB_DRIVER_DIR = "/sys/bus/usb/drivers/usb"
+MAX_THREADS = 5  # Limite de envios simultâneos (Seguro para RPi 3B+)
+
+# Sinalizador global para abortar o envio em caso de queda de rede
+abortar_envio = threading.Event()
+
+def is_usb_ligado():
+    """Verifica se o barramento USB está montado (ligado) no sistema."""
+    return os.path.exists(os.path.join(USB_DRIVER_DIR, USB_BUS))
+
+def ligar_usb():
+    try:
+        comando = f"echo '{USB_BUS}' | sudo tee {os.path.join(USB_DRIVER_DIR, 'bind')} > /dev/null"
+        subprocess.run(comando, shell=True, check=True)
+        print("Entradas USB LIGADAS.")
+    except Exception as e:
+        print(f"Erro ao ligar USB: {e}")
+
+def desligar_usb():
+    try:
+        comando = f"echo '{USB_BUS}' | sudo tee {os.path.join(USB_DRIVER_DIR, 'unbind')} > /dev/null"
+        subprocess.run(comando, shell=True, check=True)
+        print("Entradas USB DESLIGADAS.")
+    except Exception as e:
+        print(f"Erro ao desligar USB: {e}")
+
+def ligar_tailscale():
+    print("Iniciando serviço Tailscale...")
+    try:
+        subprocess.run(["sudo", "systemctl", "restart", "tailscaled"])
+        time.sleep(2)
+        subprocess.run(["sudo", "tailscale", "up"])
+        print("Tailscale iniciado com sucesso.")
+    except Exception as e:
+        print(f"Erro ao iniciar Tailscale: {e}")
+
+def is_tailscale_ligado():
+    try:
+        daemon_check = subprocess.run(
+            ["systemctl", "is-active", "tailscaled"],
+            capture_output=True, text=True
+        )
+        if daemon_check.stdout.strip() != "active":
+            return False
+            
+        status_check = subprocess.run(
+            ["sudo", "tailscale", "status"],
+            capture_output=True, text=True
+        )
+        status_out = status_check.stdout.lower()
+        
+        if "stopped" in status_out or "logged out" in status_out:
+            return False
+            
+        return True
+    except Exception:
+        return False
+
+def processar_uma_foto(arquivo, url, api_key):
+    """Função executada por cada Thread individualmente."""
+    # Se alguma outra thread detectou queda de rede, nem tenta processar
+    if abortar_envio.is_set():
+        return False
+
+    try:
+        with open(arquivo, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+
+        payload = {
+            "image_data": encoded_string,
+            "file_name": arquivo.name
+        }
+        headers = {"x-api-key": api_key, "Content-Type": "application/json"}
+
+        response = requests.post(url, json=payload, headers=headers, timeout=15)
+
+        if response.status_code == 200:
+            print(f"Sucesso: {arquivo.name} enviado (Thread: {threading.current_thread().name})")
+            arquivo.unlink()
+            return True
+        else:
+            print(f"Erro ao enviar {arquivo.name}: Status {response.status_code}")
+            return False
+
+    except requests.exceptions.RequestException as e:
+        print(f"\n[!] Falha de rede no arquivo {arquivo.name}: {e}")
+        # Ativa o sinal de abortar para parar todas as outras threads
+        abortar_envio.set()
+        return False
+
+    except Exception as e:
+        print(f"Falha local no arquivo {arquivo.name}: {e}")
+        return False
+
+def enviar_e_apagar_fotos(pasta_origem):
+    url = "https://7o79fzgdc0.execute-api.us-east-1.amazonaws.com/prod/upload"
+    api_key = os.getenv('API_KEY')
+    origem = Path(pasta_origem)
+
+    arquivos = list(origem.glob("*.jpg")) + list(origem.glob("*.jpeg"))
+
+    if not arquivos:
+        return
+
+    print(f"\nEncontradas {len(arquivos)} fotos. Iniciando envio PARALELO ({MAX_THREADS} por vez)...")
+    
+    # Limpa o sinalizador de abortar antes de começar um novo lote
+    abortar_envio.clear()
+
+    # Cria um pool de threads limitando a quantidade simultânea
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+        # Envia as tarefas para o pool
+        futures = [executor.submit(processar_uma_foto, arquivo, url, api_key) for arquivo in arquivos]
+        
+        # Aguarda a conclusão (sem bloquear as que já estão rodando se houver erro)
+        concurrent.futures.wait(futures)
+
+    if abortar_envio.is_set():
+        print("Lote interrompido precocemente devido a falhas de rede. Restante agendado para o próximo ciclo.")
+    else:
+        print("Lote de envio finalizado.")
+
+# === INÍCIO DO PROGRAMA PRINCIP
