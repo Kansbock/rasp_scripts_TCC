@@ -26,8 +26,8 @@ load_dotenv()
 USB_BUS = "1-1"
 USB_DRIVER_DIR = "/sys/bus/usb/drivers/usb"
 
-HORA_INICIO = 18
-HORA_FIM = 21
+HORA_INICIO = 12
+HORA_FIM = 18
 
 # Máximo de uploads simultâneos
 BATCH_SIZE = 5
